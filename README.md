@@ -1,8 +1,8 @@
-# Terminal Dial
+# KAGE//OS
 
 **Touch-controlled Android terminal with a rotary cybersecurity tool selector.**
 
-Terminal Dial is a native Android app for controlling the user's existing Termux/Debian environment through a local bridge. It is not intended to fake a shell or bundle a second, disconnected Linux environment.
+KAGE//OS is a native Android terminal application for controlling the user's existing Termux/Debian environment through a local bridge. It is not intended to fake a shell or bundle a second, disconnected Linux environment.
 
 ## Current prototype
 

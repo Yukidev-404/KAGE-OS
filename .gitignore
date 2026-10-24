@@ -6,3 +6,18 @@ local.properties
 .DS_Store
 *.apk
 *.aab
+
+tools/android-sdk/
+window_dump.xml
+
+# Local development tools
+tools/android-sdk/
+tools/jdk17/
+window_dump.xml
+
+# Android/Gradle build output
+.gradle/
+**/build/
+local.properties
+
+research/termux-app/

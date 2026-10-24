@@ -1,6 +1,8 @@
 package dev.yuki.terminaldial
 
+import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -23,9 +25,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -42,12 +41,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.termux.terminal.TerminalSession
+import com.termux.view.TerminalView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,7 +59,6 @@ import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.Socket
-import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -85,20 +86,31 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TerminalDialApp() {
     val scope = rememberCoroutineScope()
-    var output by remember { mutableStateOf("TERMINAL DIAL  /  DEV BUILD\n\nBridge: not connected\nStart the Termux-side bridge to attach to your Debian session.\n") }
+    val context = LocalContext.current
+
     var status by remember { mutableStateOf("DISCONNECTED") }
-    var command by remember { mutableStateOf("") }
+    var statusLine by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf(0) }
     var rotation by remember { mutableFloatStateOf(0f) }
     var socket by remember { mutableStateOf<Socket?>(null) }
     var writer by remember { mutableStateOf<BufferedWriter?>(null) }
 
-    fun sendMessage(message: JSONObject) {
-        val currentWriter = writer
-        if (currentWriter == null) {
-            output += "\n[not connected] Start the local Termux bridge first.\n"
-            return
+    val client = remember { BridgeTerminalClient(context) }
+    val bridgeInput = remember { mutableStateOf(BridgeInputStream()) }
+    var terminalSession by remember { mutableStateOf<TerminalSession?>(null) }
+
+    val terminalView = remember {
+        TerminalView(context, null).apply {
+            setTerminalViewClient(client)
+            isFocusable = true
+            isFocusableInTouchMode = true
         }
+    }
+    client.terminalView = terminalView
+
+    fun sendPacket(message: JSONObject) {
+        val currentWriter = writer
+        if (currentWriter == null) return
         scope.launch(Dispatchers.IO) {
             runCatching {
                 synchronized(currentWriter) {
@@ -109,10 +121,18 @@ private fun TerminalDialApp() {
             }.onFailure {
                 withContext(Dispatchers.Main) {
                     status = "CONNECTION ERROR"
-                    output += "\n[send failed] ${it.message}\n"
+                    statusLine = "send failed: ${it.message}"
                 }
             }
         }
+    }
+
+    fun sendInputPacket(data: String) {
+        sendPacket(JSONObject().put("type", "input").put("data", data))
+    }
+
+    fun sendResizePacket(rows: Int, cols: Int) {
+        sendPacket(JSONObject().put("type", "resize").put("rows", rows).put("cols", cols))
     }
 
     fun connect() {
@@ -123,30 +143,45 @@ private fun TerminalDialApp() {
                 val newSocket = Socket("127.0.0.1", 8765)
                 val newWriter = BufferedWriter(OutputStreamWriter(newSocket.getOutputStream(), Charsets.UTF_8))
                 val reader = BufferedReader(InputStreamReader(newSocket.getInputStream(), Charsets.UTF_8))
+                val newBridgeInput = BridgeInputStream()
+                val newBridgeOutput = BridgeOutputStream { data -> sendInputPacket(data) }
+
                 withContext(Dispatchers.Main) {
+                    bridgeInput.value = newBridgeInput
                     socket = newSocket
                     writer = newWriter
                     status = "CONNECTED"
-                    output += "\n[connected to 127.0.0.1:8765]\n"
+                    statusLine = "connected to 127.0.0.1:8765"
+                    val ts = TerminalSession(client, newBridgeInput, newBridgeOutput, null)
+                    ts.mResizeCallback = TerminalSession.TerminalResizeCallback { columns, rows ->
+                        sendResizePacket(rows, columns)
+                    }
+                    terminalSession = ts
+                    terminalView.mEmulator = null
+                    terminalView.attachSession(ts)
+                    terminalView.updateSize()
+                    terminalView.requestFocus()
                 }
                 while (!newSocket.isClosed) {
                     val line = reader.readLine() ?: break
                     val packet = runCatching { JSONObject(line) }.getOrNull()
                     if (packet != null && packet.optString("type") == "output") {
                         val chunk = packet.optString("data")
-                        withContext(Dispatchers.Main) { output += chunk }
+                        newBridgeInput.offer(chunk.toByteArray(Charsets.UTF_8))
                     } else if (packet != null && packet.optString("type") == "status") {
                         val message = packet.optString("message")
-                        withContext(Dispatchers.Main) { output += "\n[$message]\n" }
+                        withContext(Dispatchers.Main) { statusLine = message }
                     }
                 }
             } catch (error: Exception) {
                 withContext(Dispatchers.Main) {
                     status = "DISCONNECTED"
-                    output += "\n[bridge unavailable] ${error.message ?: "connection failed"}\n"
+                    statusLine = "bridge unavailable: ${error.message ?: "connection failed"}"
                 }
             } finally {
                 withContext(Dispatchers.Main) {
+                    bridgeInput.value.close()
+                    terminalSession = null
                     socket?.close()
                     socket = null
                     writer = null
@@ -169,26 +204,31 @@ private fun TerminalDialApp() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("TERMINAL DIAL", color = Accent, fontSize = 18.sp, fontFamily = FontFamily.Monospace)
-                Text("LOCAL SESSION CONSOLE", color = Muted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text("KAGE", color = Accent, fontSize = 18.sp, fontFamily = FontFamily.Monospace)
+                Text("KAGE//OS", color = Muted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
             }
             Text("● $status", color = if (status == "CONNECTED") Accent else Muted, fontSize = 10.sp)
         }
 
         if (landscape) {
             Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TerminalPanel(
-                    output = output,
-                    command = command,
-                    onCommandChange = { command = it },
-                    onSend = {
-                        if (it.isNotBlank()) {
-                            sendMessage(JSONObject().put("type", "input").put("data", it + "\n"))
-                            command = ""
-                        }
-                    },
-                    modifier = Modifier.weight(1f).fillMaxHeight()
-                )
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Panel)
+                    ) {
+                        AndroidView(
+                            factory = { terminalView },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    if (statusLine.isNotBlank()) {
+                        Text(statusLine, color = Muted, fontSize = 10.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
                 Column(
                     modifier = Modifier.width(270.dp).fillMaxHeight(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -203,8 +243,7 @@ private fun TerminalDialApp() {
                         },
                         onSelect = { selected = it },
                         onActivate = {
-                            sendMessage(JSONObject().put("type", "action").put("name", ToolGroups[selected]))
-                            output += "\n[requested action: ${ToolGroups[selected]}]\n"
+                            sendPacket(JSONObject().put("type", "action").put("name", ToolGroups[selected]))
                         },
                         modifier = Modifier.size(250.dp)
                     )
@@ -213,18 +252,21 @@ private fun TerminalDialApp() {
                 }
             }
         } else {
-            TerminalPanel(
-                output = output,
-                command = command,
-                onCommandChange = { command = it },
-                onSend = {
-                    if (it.isNotBlank()) {
-                        sendMessage(JSONObject().put("type", "input").put("data", it + "\n"))
-                        command = ""
-                    }
-                },
-                modifier = Modifier.weight(1f).fillMaxWidth()
-            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Panel)
+            ) {
+                AndroidView(
+                    factory = { terminalView },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            if (statusLine.isNotBlank()) {
+                Text(statusLine, color = Muted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -239,8 +281,7 @@ private fun TerminalDialApp() {
                     },
                     onSelect = { selected = it },
                     onActivate = {
-                        sendMessage(JSONObject().put("type", "action").put("name", ToolGroups[selected]))
-                        output += "\n[requested action: ${ToolGroups[selected]}]\n"
+                        sendPacket(JSONObject().put("type", "action").put("name", ToolGroups[selected]))
                     },
                     modifier = Modifier.size(220.dp)
                 )
@@ -251,46 +292,6 @@ private fun TerminalDialApp() {
                     Button(onClick = { connect() }) { Text(if (status == "CONNECTED") "CONNECTED" else "CONNECT") }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun TerminalPanel(
-    output: String,
-    command: String,
-    onCommandChange: (String) -> Unit,
-    onSend: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier.clip(RoundedCornerShape(12.dp)).background(Panel).padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text("SESSION OUTPUT", color = Muted, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-        Text(
-            text = output.takeLast(12000),
-            color = Color(0xFFD7E4EA),
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.weight(1f)
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Ink).padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("$ ", color = Accent, fontFamily = FontFamily.Monospace)
-            BasicTextField(
-                value = command,
-                onValueChange = onCommandChange,
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontFamily = FontFamily.Monospace, fontSize = 12.sp),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend(command) }),
-                modifier = Modifier.weight(1f)
-            )
-            Button(onClick = { onSend(command) }) { Text("SEND") }
         }
     }
 }
