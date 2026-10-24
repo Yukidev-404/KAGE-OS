@@ -1,68 +1,78 @@
 # KAGE//OS
 
-**Touch-controlled Android terminal with a rotary cybersecurity tool selector.**
+**A touch-controlled Android terminal with a rotary tool selector.**
 
-KAGE//OS is a native Android terminal application for controlling the user's existing Termux/Debian environment through a local bridge. It is not intended to fake a shell or bundle a second, disconnected Linux environment.
+KAGE//OS is an early-stage Android terminal client designed to connect to the user's existing Termux/Debian environment through a local bridge. The goal is to provide a mobile terminal experience without bundling a separate, disconnected Linux environment.
 
-## Current prototype
+> **Status: Prototype.** This project is under active development. Build success does not guarantee that all terminal interactions or bridge workflows work correctly on every device.
 
-- Kotlin + Jetpack Compose Android app scaffold.
-- Portrait layout: terminal pane above the rotary selector.
-- Landscape layout: terminal on the left, selector on the right.
-- Drag to rotate through RECON, WEB, REVERSE, CODEX, OPENCODE, and SYSTEM; tap the center to request the selected action.
-- A Termux-side Python PTY bridge that binds to `127.0.0.1:8765`, launches the existing Debian PRoot shell, and keeps the shell alive while the app disconnects/reconnects as long as the bridge process remains running.
-- The app and bridge use newline-delimited JSON packets.
+## Current features
 
-**This is an early prototype, not a release-ready terminal emulator.** The output pane is currently plain text; ANSI/xterm cursor handling, full interactive key mapping, robust background-service lifecycle, build automation, and on-device validation remain to be done. In particular, interactive TUIs such as Codex/OpenCode may not render or accept all keys correctly until a proper terminal emulator is integrated.
+- Native Android app built with Kotlin and Jetpack Compose.
+- Rotary selector for RECON, WEB, REVERSE, CODEX, OPENCODE, and SYSTEM action groups.
+- Portrait and landscape layouts.
+- Terminal rendering integration using the Termux `terminal-emulator` and `terminal-view` modules.
+- Socket-backed terminal bridge integration using newline-delimited JSON packets.
+- Local development build through Gradle.
 
-## Architecture
+Some interactive terminal features, keyboard mappings, ANSI/xterm behavior, lifecycle handling, and device-specific behavior may still need improvement.
 
-- **Android client:** Kotlin, Jetpack Compose, custom rotary selector.
-- **Execution environment:** the user's existing Termux + Debian PRoot installation.
-- **Local bridge:** `bridge/terminal_dial_bridge.py`, run from Termux (outside Debian).
-- **PTY session:** the bridge launches `proot-distro login debian --isolated -- /bin/bash --login`.
+## How it works
 
-Android apps are sandboxed. The Android client cannot directly execute binaries in Termux's private directories; the bridge is an intentional integration point. The bridge is not a security boundary against other processes running under the same Android/Termux user.
+- **Android client:** Kotlin, Jetpack Compose, and the terminal view.
+- **Shell environment:** the user's existing Termux and Debian PRoot installation.
+- **Bridge:** a local process in Termux communicates with the Android client over loopback.
 
-## Quick start (development)
+Android's application sandbox means the app does not directly execute binaries from Termux's private directories. The bridge provides the connection to the existing environment.
 
-1. Open this repository in Android Studio and let Gradle sync.
-2. Install Python in Termux if needed: `pkg install python`.
-3. Copy `bridge/terminal_dial_bridge.py` onto the phone, for example to `~/terminal_dial_bridge.py` in Termux.
-4. Start it from the **Termux shell**, not inside Debian: `python ~/terminal_dial_bridge.py`.
-5. Run the Android app on the same device and tap **CONNECT**.
+## Development setup
 
-The repository now includes a Gradle Wrapper targeting Gradle 8.9, compatible with Android Gradle Plugin 8.7.3. Build the debug APK locally with:
+### Requirements
+
+- Android Studio or a compatible Android development environment
+- JDK 17
+- Android SDK with platform `android-35` and build-tools `35.0.0`
+- A compatible Android device or emulator for testing
+
+### Build
+
+On Windows:
+
+```powershell
+.\gradlew.bat assembleDebug
+```
+
+On macOS/Linux:
 
 ```sh
 ./gradlew assembleDebug
 ```
 
-On Windows use `gradlew.bat assembleDebug`. Requirements:
+The Gradle wrapper downloads its configured Gradle version on first use. The debug APK is normally generated under `app/build/outputs/apk/debug/`.
 
-- JDK 17
-- Android SDK with platform `android-35` and build-tools `35.0.0` (platform-tools recommended)
+### Bridge
 
-The wrapper downloads Gradle 8.9 automatically on first run. CI uses the same wrapper (see `.github/workflows/android.yml`). A signed/release APK is still not included; the first on-device run is needed to validate the Gradle setup, socket connection, PTY behavior, and layout on the target phone.
+Follow the bridge-specific instructions in [bridge/README.md](bridge/README.md), if present in your checkout. Keep the bridge bound to loopback (`127.0.0.1`) and do not expose it to a LAN or the public internet.
 
-See [bridge/README.md](bridge/README.md) for protocol details and limitations.
+## Safety notes
 
-## Safety defaults
+- Use cybersecurity tools only on systems you own or are explicitly authorized to test.
+- Commands entered in the terminal run with the permissions of the connected Termux/Debian user.
+- Do not treat PRoot as a security boundary or run the bridge with unnecessary privileges.
+- Never commit API keys, passwords, access tokens, signing keys, or other secrets.
+- This project is a prototype and has not been independently security-audited.
 
-- Bind the bridge to `127.0.0.1` only; never expose it to a LAN or the internet.
-- Do not run as root or claim PRoot is a security boundary.
-- Tool-group launch actions are fixed and allowlisted, although commands typed into the terminal intentionally execute as the current Termux/Debian user.
-- Use cybersecurity tools only against systems you own or are explicitly authorized to test.
-- Never store API keys, access tokens, passwords, or local machine secrets in this repository.
+## Third-party code
 
-## Next steps
+This repository includes or adapts the Termux `terminal-emulator` and `terminal-view` modules. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the applicable license notices in those modules for attribution and license details.
 
-1. Integrate a real ANSI/xterm-compatible terminal view and keyboard controls.
-2. Improve session management and bridge lifecycle.
-3. Add terminal resize and reconnection handling.
-4. Validate interactive Codex/OpenCode sessions and all tool-group actions on-device.
-5. ~~Add Gradle wrapper, CI build, and reproducible debug APK instructions.~~ (done)
+## Roadmap
+
+- Improve terminal keyboard and ANSI/xterm compatibility.
+- Improve connection, resize, and session lifecycle handling.
+- Test bridge behavior and interactive applications on real devices.
+- Improve automated builds and release packaging.
 
 ## License
 
-No license has been selected yet. Until one is added, all rights are reserved by the copyright holder.
+KAGE//OS is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full license text.
