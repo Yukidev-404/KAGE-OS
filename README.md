@@ -32,7 +32,18 @@ Android apps are sandboxed. The Android client cannot directly execute binaries 
 4. Start it from the **Termux shell**, not inside Debian: `python ~/terminal_dial_bridge.py`.
 5. Run the Android app on the same device and tap **CONNECT**.
 
-The current repository does not yet include a Gradle wrapper or a signed/release APK. The first on-device run is needed to validate the Gradle setup, socket connection, PTY behavior, and layout on the target phone.
+The repository now includes a Gradle Wrapper targeting Gradle 8.9, compatible with Android Gradle Plugin 8.7.3. Build the debug APK locally with:
+
+```sh
+./gradlew assembleDebug
+```
+
+On Windows use `gradlew.bat assembleDebug`. Requirements:
+
+- JDK 17
+- Android SDK with platform `android-35` and build-tools `35.0.0` (platform-tools recommended)
+
+The wrapper downloads Gradle 8.9 automatically on first run. CI uses the same wrapper (see `.github/workflows/android.yml`). A signed/release APK is still not included; the first on-device run is needed to validate the Gradle setup, socket connection, PTY behavior, and layout on the target phone.
 
 See [bridge/README.md](bridge/README.md) for protocol details and limitations.
 
@@ -50,7 +61,7 @@ See [bridge/README.md](bridge/README.md) for protocol details and limitations.
 2. Improve session management and bridge lifecycle.
 3. Add terminal resize and reconnection handling.
 4. Validate interactive Codex/OpenCode sessions and all tool-group actions on-device.
-5. Add Gradle wrapper, CI build, and reproducible debug APK instructions.
+5. ~~Add Gradle wrapper, CI build, and reproducible debug APK instructions.~~ (done)
 
 ## License
 
